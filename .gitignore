@@ -36,3 +36,4 @@ release
 bin
 *.ipch
 .directory
+# Whitespace change for macports local builds.

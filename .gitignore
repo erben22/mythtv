@@ -18,3 +18,4 @@ object_script.*
 *.pc
 patches
 *.core
+# Comment only change to test macports build locally.

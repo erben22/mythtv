@@ -41,6 +41,9 @@ using namespace std;
 #include <mythdate.h>
 #include <mythuihelper.h>
 #include "mythlogging.h"
+#if defined _MSC_VER || defined __MINGW32__
+#  include "compat.h"                   // for random
+#endif
 
 // MythGallery headers
 #include "galleryutil.h"
@@ -163,7 +166,7 @@ void GLSingleView::CleanUp(void)
     makeCurrent();
 
     if (m_slideshow_running)
-    {  
+    {
         GetMythMainWindow()->PauseIdleTimer(false);
         GetMythUI()->RestoreScreensaver();
     }
@@ -219,7 +222,7 @@ void GLSingleView::paintGL(void)
     {
         m_movieState = 2;
 
-        ThumbItem *item = m_itemList.at(m_pos);
+        ThumbItem *item = getCurrentItem();
 
         if (item)
         {
@@ -290,7 +293,8 @@ void GLSingleView::keyPressEvent(QKeyEvent *e)
     if (m_slideshow_running)
         GetMythMainWindow()->PauseIdleTimer(false);
     bool wasRunning = m_slideshow_running;
-    m_slideshow_timer->stop();
+    if (m_slideshow_timer)
+        m_slideshow_timer->stop();
     m_slideshow_running = false;
     GetMythUI()->RestoreScreensaver();
     m_effect_running = false;
@@ -439,7 +443,7 @@ void GLSingleView::keyPressEvent(QKeyEvent *e)
         }
         else if (action == "DELETE")
         {
-            ThumbItem *item = m_itemList.at(m_pos);
+            ThumbItem *item = getCurrentItem();
             if (item && GalleryUtil::Delete(item->GetPath()))
             {
                 item->SetPixmap(NULL);
@@ -453,7 +457,7 @@ void GLSingleView::keyPressEvent(QKeyEvent *e)
             m_movieState = 1;
         }
         else if (action == "PLAY" || action == "SLIDESHOW" ||
-                 action == "RANDOMSHOW")
+                 action == "RANDOMSHOW" || action == "SEASONALSHOW")
         {
             m_source_x   = 0;
             m_source_y   = 0;
@@ -483,7 +487,7 @@ void GLSingleView::keyPressEvent(QKeyEvent *e)
         }
     }
 
-    if (m_slideshow_running || m_info_show_short)
+    if (m_slideshow_timer && (m_slideshow_running || m_info_show_short))
     {
         m_slideshow_timer->stop();
         m_slideshow_timer->setSingleShot(true);
@@ -571,8 +575,7 @@ void GLSingleView::DisplayNext(bool reset, bool loadImage)
 
     while (true)
     {
-        m_pos = m_slideshow_sequence->next();
-        item = m_itemList.at(m_pos);
+        item = advanceItem();
         if (item)
         {
             if (QFile::exists(item->GetPath()))
@@ -608,9 +611,7 @@ void GLSingleView::DisplayPrev(bool reset, bool loadImage)
     int oldpos = m_pos;
     while (true)
     {
-        m_pos = m_slideshow_sequence->prev();
-
-        ThumbItem *item = m_itemList.at(m_pos);
+        ThumbItem *item = retreatItem();
         if (item && QFile::exists(item->GetPath()))
             break;
 
@@ -631,7 +632,7 @@ void GLSingleView::DisplayPrev(bool reset, bool loadImage)
 void GLSingleView::Load(void)
 {
     m_movieState = 0;
-    ThumbItem *item = m_itemList.at(m_pos);
+    ThumbItem *item = getCurrentItem();
     if (!item)
     {
         LOG(VB_GENERAL, LOG_ERR, LOC + QString("No item at %1").arg(m_pos));
@@ -668,7 +669,7 @@ void GLSingleView::Rotate(int angle)
 
     m_texItem[m_texCur].SetAngle(ang);
 
-    ThumbItem *item = m_itemList.at(m_pos);
+    ThumbItem *item = getCurrentItem();
     if (item)
         item->SetRotationAngle(ang);
 
@@ -703,7 +704,7 @@ int GLSingleView::GetNearestGLTextureSize(int v) const
         }
     }
 
-    if (n > 1)
+    if (n > 1 && last < 31)
         s = 1 << (last + 1);
     else
         s = 1 << last;
@@ -1256,7 +1257,7 @@ void GLSingleView::EffectKenBurns(void)
         m_effect_kenBurns_initialized = !m_effect_kenBurns_initialized;
         m_effect_kenBurns_item = NULL;
         // Need to load images in the background to keep effect smooth
-        m_effect_kenBurns_imageLoadThread = new KenBurnsImageLoader(this, m_itemList, m_texSize, m_screenSize);
+        m_effect_kenBurns_imageLoadThread = new KenBurnsImageLoader(this, m_texSize, m_screenSize);
         //Since total image time is longer/different than effect time, create image timers
         m_effect_kenBurns_image_time[m_texCur ? 0 : 1].restart();
         // Pan image to a random location
@@ -1283,8 +1284,7 @@ void GLSingleView::EffectKenBurns(void)
 
         while (true)
         {
-            m_pos = m_slideshow_sequence->next();
-            m_effect_kenBurns_item = m_itemList.at(m_pos);
+            m_effect_kenBurns_item = advanceItem();
             if (m_effect_kenBurns_item)
             {
                 // Skip movies
@@ -1299,7 +1299,6 @@ void GLSingleView::EffectKenBurns(void)
                 close();
             }
         }
-        m_effect_kenBurns_imageLoadThread->Initialize(m_pos);
         m_effect_kenBurns_imageLoadThread->start();
     }
 
@@ -1460,7 +1459,7 @@ void GLSingleView::SlideTimeout(void)
     }
 
     updateGL();
-    if (m_slideshow_running)
+    if (m_slideshow_running && m_slideshow_timer)
     {
         m_slideshow_timer->stop();
         m_slideshow_timer->setSingleShot(true);
@@ -1539,30 +1538,22 @@ void GLSingleView::FindRandXY(float &x_loc, float &y_loc)
 }
 
 KenBurnsImageLoader::KenBurnsImageLoader(GLSingleView *singleView,
-                                         ThumbList &itemList,
                                          QSize texSize, QSize screenSize) :
     MThread("KenBurnsImageLoader"),
     m_singleView(singleView),
-    m_itemList(itemList),
-    m_pos(0),
     m_tex1First(false),
     m_screenSize(screenSize),
     m_texSize(texSize)
 {
 }
 
-void KenBurnsImageLoader::Initialize(int pos)
-{
-    m_pos = pos;
-}
-
 void KenBurnsImageLoader::run()
 {
     RunProlog();
-    ThumbItem *item = m_itemList.at(m_pos);
+    ThumbItem *item = m_singleView->getCurrentItem();
     if (!item)
     {
-        LOG(VB_GENERAL, LOG_ERR, LOC + QString("No item at %1").arg(m_pos));
+        LOG(VB_GENERAL, LOG_ERR, LOC + QString("No item at current position"));
         RunEpilog();
         return;
     }

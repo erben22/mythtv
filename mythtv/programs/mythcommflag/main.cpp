@@ -38,8 +38,10 @@ using namespace std;
 #include "ringbuffer.h"
 #include "commandlineparser.h"
 #include "mythtranslation.h"
+#include "loggingserver.h"
 #include "mythlogging.h"
 #include "signalhandling.h"
+#include "cleanupguard.h"
 
 // Commercial Flagging headers
 #include "CommDetectorBase.h"
@@ -59,24 +61,6 @@ namespace
         gContext = NULL;
         SignalHandler::Done();
     }
-
-    class CleanupGuard
-    {
-      public:
-        typedef void (*CleanupFunc)();
-
-      public:
-        CleanupGuard(CleanupFunc cleanFunction) :
-            m_cleanFunction(cleanFunction) {}
-
-        ~CleanupGuard()
-        {
-            m_cleanFunction();
-        }
-
-      private:
-        CleanupFunc m_cleanFunction;
-    };
 }
 
 int  quiet = 0;
@@ -1139,7 +1123,7 @@ int main(int argc, char *argv[])
     signallist << SIGRTMIN;
 #endif
     SignalHandler::Init(signallist);
-    signal(SIGHUP, SIG_IGN);
+    SignalHandler::SetHandler(SIGHUP, logSigHup);
 #endif
 
     gContext = new MythContext(MYTH_BINARY_VERSION);
@@ -1161,7 +1145,7 @@ int main(int argc, char *argv[])
         if (outputTypes->contains(om))
             outputMethod = outputTypes->value(om);
     }
-    
+
     if (cmdline.toBool("chanid") && cmdline.toBool("starttime"))
     {
         // operate on a recording in the database
@@ -1223,7 +1207,7 @@ int main(int argc, char *argv[])
             ret = FlagCommercials(chanid, starttime, jobID, "", jobQueueCPU != 0);
 
         if (ret > GENERIC_EXIT_NOT_OK)
-            JobQueue::ChangeJobStatus(jobID, JOB_ERRORED, 
+            JobQueue::ChangeJobStatus(jobID, JOB_ERRORED,
                 QCoreApplication::translate("(mythcommflag)",
                                             "Failed with exit status %1",
                                             "Job status").arg(ret));

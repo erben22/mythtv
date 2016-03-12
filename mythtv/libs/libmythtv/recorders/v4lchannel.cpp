@@ -34,9 +34,10 @@ using namespace std;
 static int format_to_mode(const QString &fmt);
 static QString mode_to_format(int mode);
 
-V4LChannel::V4LChannel(TVRec *parent, const QString &videodevice)
-    : DTVChannel(parent),
-      device(videodevice),          videofd(-1),
+V4LChannel::V4LChannel(TVRec *parent, const QString &videodevice,
+                       const QString &audiodevice)
+    : DTVChannel(parent),           device(videodevice),
+      audio_device(audiodevice),    videofd(-1),
       device_name(),                driver_name(),
       curList(NULL),                totalChannels(0),
       currentFormat(),
@@ -95,7 +96,8 @@ bool V4LChannel::Open(void)
     has_tuner      = !!(capabilities & V4L2_CAP_TUNER);
     has_sliced_vbi = !!(capabilities & V4L2_CAP_SLICED_VBI_CAPTURE);
 
-    if (driver_name == "bttv" || driver_name == "cx8800" || driver_name == "cx88_blackbird")
+    if (driver_name == "bttv" || driver_name == "cx8800" || driver_name == "cx88_blackbird"
+        || driver_name == "saa7164")
         has_stream_io = false; // driver workaround, see #9825, #10519 and #12336
 
     LOG(VB_CHANNEL, LOG_INFO, LOC + QString("Device name '%1' driver '%2'.")

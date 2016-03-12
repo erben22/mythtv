@@ -142,6 +142,7 @@ HEADERS += streamingringbuffer.h    metadataimagehelper.h
 HEADERS += icringbuffer.h
 HEADERS += mythavutil.h
 HEADERS += recordingfile.h
+HEADERS += driveroption.h
 
 SOURCES += recordinginfo.cpp
 SOURCES += dbcheck.cpp
@@ -257,8 +258,8 @@ INSTALLS += inc
 #DVD stuff
 DEPENDPATH  += ../../external/libmythdvdnav/
 DEPENDPATH  += ../../external/libmythdvdnav/dvdread # for dvd_reader.h & dvd_input.h
-INCLUDEPATH += ../../external/libmythdvdnav/dvdnav
-INCLUDEPATH += ../../external/libmythdvdnav/dvdread
+QMAKE_CXXFLAGS += -isystem ../../external/libmythdvdnav/dvdnav
+QMAKE_CXXFLAGS += -isystem ../../external/libmythdvdnav/dvdread
 
 !win32-msvc*:POST_TARGETDEPS += ../../external/libmythdvdnav/libmythdvdnav-$${MYTH_LIB_EXT}
 
@@ -352,12 +353,23 @@ using_frontend {
     }
 
     using_openmax {
-        DEFINES += USING_OPENMAX OMX_SKIP64BIT USING_BROADCOM
+        DEFINES += USING_OPENMAX
         HEADERS += privatedecoder_omx.h
         SOURCES += privatedecoder_omx.cpp
         HEADERS += videoout_omx.h
         SOURCES += videoout_omx.cpp
-        LIBS += -lopenmaxil
+        contains( HAVE_OPENMAX_BROADCOM, yes ) {
+            DEFINES += OMX_SKIP64BIT USING_BROADCOM
+            # Raspbian
+            QMAKE_CXXFLAGS += -isystem /opt/vc/include -isystem /opt/vc/include/IL -isystem /opt/vc/include/interface/vcos/pthreads -isystem /opt/vc/include/interface/vmcs_host/linux
+            # Ubuntu
+            QMAKE_CXXFLAGS += -isystem /usr/include/IL -isystem /usr/include/interface/vcos/pthreads -isystem /usr/include/interface/vmcs_host/linux
+            LIBS += -L/opt/vc/lib -lopenmaxil
+        }
+        contains( HAVE_OPENMAX_BELLAGIO, yes ) {
+            DEFINES += USING_BELLAGIO
+            #LIBS += -lomxil-bellagio
+        }
     }
 
     using_libass {
@@ -618,10 +630,20 @@ using_backend {
     }
 
     using_v4l2 {
+        HEADERS += v4l2util.h
+        SOURCES += v4l2util.cpp
+
         HEADERS += recorders/v4lchannel.h
         HEADERS += recorders/analogsignalmonitor.h
         SOURCES += recorders/v4lchannel.cpp
         SOURCES += recorders/analogsignalmonitor.cpp
+
+        HEADERS += recorders/v4l2encrecorder.h
+        SOURCES += recorders/v4l2encrecorder.cpp
+        HEADERS += recorders/v4l2encstreamhandler.h
+        SOURCES += recorders/v4l2encstreamhandler.cpp
+        HEADERS += recorders/v4l2encsignalmonitor.h
+        SOURCES += recorders/v4l2encsignalmonitor.cpp
 
         DEFINES += USING_V4L2
     }
@@ -710,7 +732,7 @@ using_backend {
     # Support for HDHomeRun box
     using_hdhomerun {
         # MythTV HDHomeRun glue
-        INCLUDEPATH += ../../external/libhdhomerun
+        QMAKE_CXXFLAGS += -isystem ../../external/libhdhomerun
         DEPENDPATH += ../../external/libhdhomerun
 
         HEADERS += recorders/hdhrsignalmonitor.h
@@ -864,6 +886,8 @@ LIBS += -L../../external/FFmpeg/libavutil
 LIBS += -L../../external/FFmpeg/libavcodec
 LIBS += -L../../external/FFmpeg/libavformat
 LIBS += -L../../external/FFmpeg/libswscale
+LIBS += -L../../external/FFmpeg/libpostproc
+LIBS += -L../../external/FFmpeg/libavfilter
 LIBS += -L../libmythui -L../libmythupnp
 LIBS += -L../libmythbase
 LIBS += -L../libmythservicecontracts
@@ -872,6 +896,8 @@ LIBS += -lmythswscale
 LIBS += -lmythavformat
 LIBS += -lmythavcodec
 LIBS += -lmythavutil
+LIBS += -lmythpostproc
+LIBS += -lmythavfilter
 LIBS += -lmythui-$$LIBVERSION       -lmythupnp-$$LIBVERSION
 LIBS += -lmythbase-$$LIBVERSION
 LIBS += -lmythservicecontracts-$$LIBVERSION
@@ -889,6 +915,8 @@ LIBS += $$EXTRA_LIBS $$QMAKE_LIBS_DYNLOAD
     POST_TARGETDEPS += ../../external/FFmpeg/libavcodec/$$avLibName(avcodec)
     POST_TARGETDEPS += ../../external/FFmpeg/libavformat/$$avLibName(avformat)
     POST_TARGETDEPS += ../../external/FFmpeg/libswscale/$$avLibName(swscale)
+    POST_TARGETDEPS += ../../external/FFmpeg/libpostproc/$$avLibName(postproc)
+    POST_TARGETDEPS += ../../external/FFmpeg/libavfilter/$$avLibName(avfilter)
 
     using_mheg: POST_TARGETDEPS += ../libmythfreemheg/libmythfreemheg-$${MYTH_SHLIB_EXT}
     using_live: POST_TARGETDEPS += ../libmythlivemedia/libmythlivemedia-$${MYTH_SHLIB_EXT}

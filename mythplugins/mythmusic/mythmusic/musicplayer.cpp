@@ -601,7 +601,7 @@ void MusicPlayer::customEvent(QEvent *event)
             mdata->setID(getCurrentMetadata()->ID());
             mdata->setHostname(gCoreContext->GetMasterHostName());
             mdata->setTrack(m_playedList.count() + 1);
-            mdata->setStation(getCurrentMetadata()->Station());
+            mdata->setBroadcaster(getCurrentMetadata()->Broadcaster());
             mdata->setChannel(getCurrentMetadata()->Channel());
 
             getCurrentMetadata()->setTitle(mdata->Title());
@@ -1021,6 +1021,8 @@ void MusicPlayer::loadPlaylist(void)
 
 void MusicPlayer::loadStreamPlaylist(void)
 {
+    MusicMetadata::IdType id = getCurrentMetadata() ? getCurrentMetadata()->ID() : -1;
+
     // create the radio playlist
     gMusicData->all_playlists->getStreamPlaylist()->disableSaves();
     gMusicData->all_playlists->getStreamPlaylist()->removeAllTracks();
@@ -1030,6 +1032,9 @@ void MusicPlayer::loadStreamPlaylist(void)
     {
         MusicMetadata *mdata = list->at(x);
         gMusicData->all_playlists->getStreamPlaylist()->addTrack(mdata->ID(), false);
+
+        if (mdata->ID() == id)
+            m_currentTrack = x;
     }
 
     gMusicData->all_playlists->getStreamPlaylist()->enableSaves();

@@ -77,33 +77,6 @@ extern "C" {
 #include "../mytharchive/archiveutil.h"
 #include "../mytharchive/remoteavformatcontext.h"
 
-namespace
-{
-    void cleanup()
-    {
-        delete gContext;
-        gContext = NULL;
-    }
-
-    class CleanupGuard
-    {
-      public:
-        typedef void (*CleanupFunc)();
-
-      public:
-        CleanupGuard(CleanupFunc cleanFunction) :
-            m_cleanFunction(cleanFunction) {}
-
-        ~CleanupGuard()
-        {
-            m_cleanFunction();
-        }
-
-      private:
-        CleanupFunc m_cleanFunction;
-    };
-}
-
 class NativeArchive
 {
   public:
@@ -1666,6 +1639,7 @@ static int grabThumbnail(QString inFile, QString thumbList, QString outFile, int
     memset(&orig, 0, sizeof(AVPicture));
     memset(&retbuf, 0, sizeof(AVPicture));
     MythAVCopy copyframe;
+    MythPictureDeinterlacer deinterlacer(codecCtx->pix_fmt, width, height);
 
     int bufflen = width * height * 4;
     unsigned char *outputbuf = new unsigned char[bufflen];
@@ -1720,14 +1694,13 @@ static int grabThumbnail(QString inFile, QString thumbList, QString outFile, int
                             filename = filename.arg(thumbCount);
 
                         avpicture_fill(&retbuf, outputbuf,
-                                       PIX_FMT_RGB32, width, height);
+                                       AV_PIX_FMT_RGB32, width, height);
 
                         AVFrame *tmp = frame;
-                        avpicture_deinterlace((AVPicture*)tmp,
-                                              (AVPicture*)tmp,
-                                              codecCtx->pix_fmt, width, height);
+                        deinterlacer.DeinterlaceSingle((AVPicture*)tmp,
+                                                       (AVPicture*)tmp);
 
-                        copyframe.Copy(&retbuf, PIX_FMT_RGB32,
+                        copyframe.Copy(&retbuf, AV_PIX_FMT_RGB32,
                                        (AVPicture*) tmp,
                                        codecCtx->pix_fmt, width, height);
 
@@ -1980,7 +1953,7 @@ static int getFileInfo(QString inFile, QString outFile, int lenMethod)
                 stream.setAttribute("codec", codec.trimmed());
                 stream.setAttribute("width", st->codec->width);
                 stream.setAttribute("height", st->codec->height);
-                stream.setAttribute("bitrate", st->codec->bit_rate);
+                stream.setAttribute("bitrate", (qlonglong)st->codec->bit_rate);
 
                 float fps;
                 if (st->r_frame_rate.den && st->r_frame_rate.num)
@@ -2125,7 +2098,7 @@ static int getFileInfo(QString inFile, QString outFile, int lenMethod)
                 stream.setAttribute("id", st->id);
 
                 stream.setAttribute("samplerate", st->codec->sample_rate);
-                stream.setAttribute("bitrate", st->codec->bit_rate);
+                stream.setAttribute("bitrate", (qlonglong)st->codec->bit_rate);
 
                 if (st->start_time != (int) AV_NOPTS_VALUE)
                 {
@@ -2399,7 +2372,6 @@ int main(int argc, char **argv)
     // Don't listen to console input
     close(0);
 
-    //CleanupGuard callCleanup(cleanup);
     gContext = new MythContext(MYTH_BINARY_VERSION);
     if (!gContext->Init(false))
     {

@@ -213,6 +213,7 @@ MythPlayer::MythPlayer(PlayerFlags flags)
       disp_timecode(0),             avsync_audiopaused(false),
       // Time Code stuff
       prevtc(0),                    prevrp(0),
+      savedAudioTimecodeOffset(0),
       // LiveTVChain stuff
       m_tv(NULL),                   isDummy(false),
       // Debugging variables
@@ -240,7 +241,6 @@ MythPlayer::MythPlayer(PlayerFlags flags)
     clearSavedPosition = gCoreContext->GetNumSetting("ClearSavedPosition", 1);
     endExitPrompt      = gCoreContext->GetNumSetting("EndOfRecordingExitPrompt");
     pip_default_loc    = (PIPLocation)gCoreContext->GetNumSetting("PIPLocation", kPIPTopLeft);
-    tc_wrap[TC_AUDIO]  = gCoreContext->GetNumSetting("AudioSyncOffset", 0);
 
     // Get VBI page number
     QString mypage = gCoreContext->GetSetting("VBIpageNr", "888");
@@ -551,6 +551,13 @@ void MythPlayer::ReinitOSD(void)
                 ToggleCaptions(old);
                 osd->Reinit(visible, aspect);
                 EnableCaptions(old, false);
+                if (deleteMap.IsEditing())
+                {
+                    bool const changed = deleteMap.IsChanged();
+                    deleteMap.SetChanged(true);
+                    deleteMap.UpdateOSD(framesPlayed, video_frame_rate, osd);
+                    deleteMap.SetChanged(changed);
+                }
             }
         }
 
@@ -1895,11 +1902,21 @@ void MythPlayer::AVSync(VideoFrame *buffer, bool limit_delay)
         osdLock.lock();
         videoOutput->PrepareFrame(buffer, ps, osd);
         osdLock.unlock();
-        LOG(VB_PLAYBACK | VB_TIMESTAMP, LOG_INFO,
-            LOC + QString("AVSync waitforframe %1 %2")
-                .arg(avsync_adjustment).arg(m_double_framerate));
-        vsync_delay_clock = videosync->WaitForFrame
-                            (frameDelay + avsync_adjustment + repeat_delay);
+        // Don't wait for sync if this is a secondary PBP otherwise
+        // the primary PBP will become out of sync
+        if (!player_ctx->IsPBP() || player_ctx->IsPrimaryPBP())
+        {
+            LOG(VB_PLAYBACK | VB_TIMESTAMP, LOG_INFO,
+                LOC + QString("AVSync waitforframe %1 %2")
+                    .arg(avsync_adjustment).arg(m_double_framerate));
+            vsync_delay_clock = videosync->WaitForFrame
+                                (frameDelay + avsync_adjustment + repeat_delay);
+        }
+        else
+        {
+            vsync_delay_clock = 0;
+            lastsync = true;
+        }
         //currentaudiotime = AVSyncGetAudiotime();
         LOG(VB_PLAYBACK | VB_TIMESTAMP, LOG_INFO, LOC + "AVSync show");
         videoOutput->Show(ps);
@@ -1929,7 +1946,8 @@ void MythPlayer::AVSync(VideoFrame *buffer, bool limit_delay)
             videoOutput->PrepareFrame(buffer, ps, osd);
             osdLock.unlock();
             // Display the second field
-            vsync_delay_clock = videosync->WaitForFrame(frameDelay +
+            if (!player_ctx->IsPBP() || player_ctx->IsPrimaryPBP())
+                vsync_delay_clock = videosync->WaitForFrame(frameDelay +
                                                         avsync_adjustment);
             videoOutput->Show(ps);
         }
@@ -2273,7 +2291,7 @@ bool MythPlayer::CanSupportDoubleRate(void)
 {
     if (!videosync)
         return false;
-    return (frame_interval / 2 > videosync->getRefreshInterval() * 0.995);
+    return (frame_interval / 2.0 > videosync->getRefreshInterval() * 0.995);
 }
 
 void MythPlayer::EnableFrameRateMonitor(bool enable)
@@ -2299,7 +2317,7 @@ void MythPlayer::ForceDeinterlacer(const QString &override)
          videoOutput->NeedsDoubleFramerate();
     m_double_process = videoOutput->IsExtraProcessingRequired();
 
-    if ((m_double_framerate && !CanSupportDoubleRate()) || !normal)
+    if (m_double_framerate && (!CanSupportDoubleRate() || !normal))
         FallbackDeint();
 
     videofiltersLock.unlock();
@@ -2427,7 +2445,17 @@ bool MythPlayer::VideoLoop(void)
 {
     if (videoPaused || isDummy)
     {
-        usleep(frame_interval);
+        switch (player_ctx->GetPIPState())
+        {
+          case kPIPonTV:
+          case kPBPRight:
+            break;
+          case kPIPOff:
+          case kPIPStandAlone:
+          case kPBPLeft:  // PrimaryBPB
+            usleep(frame_interval);
+            break;
+        }
         DisplayPauseFrame();
     }
     else
@@ -3525,7 +3553,6 @@ int64_t MythPlayer::AdjustAudioTimecodeOffset(int64_t v, int newsync)
         tc_wrap[TC_AUDIO] = newsync;
     else
         tc_wrap[TC_AUDIO] += v;
-    gCoreContext->SaveSetting("AudioSyncOffset", tc_wrap[TC_AUDIO]);
     return tc_wrap[TC_AUDIO];
 }
 
@@ -4032,12 +4059,12 @@ void MythPlayer::ClearAfterSeek(bool clearvideobuffers)
     if (clearvideobuffers && videoOutput)
         videoOutput->ClearAfterSeek();
 
-    int64_t savedAudioTimecodeOffset = tc_wrap[TC_AUDIO];
+    int64_t savedTC = tc_wrap[TC_AUDIO];
 
     for (int j = 0; j < TCTYPESMAX; j++)
         tc_wrap[j] = tc_lastval[j] = 0;
 
-    tc_wrap[TC_AUDIO] = savedAudioTimecodeOffset;
+    tc_wrap[TC_AUDIO] = savedTC;
 
     audio.Reset();
     // Reenable (or re-disable) subtitles, which ultimately does
@@ -4084,6 +4111,9 @@ bool MythPlayer::EnableEdit(void)
     m_audiograph.SetSampleRate(sample_rate);
     m_audiograph.SetSampleCount((unsigned)(sample_rate / video_frame_rate));
     GetAudio()->addVisual(&m_audiograph);
+
+    savedAudioTimecodeOffset = tc_wrap[TC_AUDIO];
+    tc_wrap[TC_AUDIO] = 0;
 
     speedBeforeEdit = play_speed;
     pausedBeforeEdit = Pause();
@@ -4138,6 +4168,9 @@ void MythPlayer::DisableEdit(int howToSave)
     player_ctx->UnlockPlayingInfo(__FILE__, __LINE__);
     GetAudio()->removeVisual(&m_audiograph);
     m_audiograph.Reset();
+    tc_wrap[TC_AUDIO] = savedAudioTimecodeOffset;
+    savedAudioTimecodeOffset = 0;
+
     if (!pausedBeforeEdit)
         Play(speedBeforeEdit);
     else
@@ -4451,6 +4484,10 @@ char *MythPlayer::GetScreenGrabAtFrame(uint64_t frameNum, bool absolute,
     memset(&orig,   0, sizeof(AVPicture));
     memset(&retbuf, 0, sizeof(AVPicture));
 
+    bufflen = 0;
+    vw = vh = 0;
+    ar = 0;
+
     if (OpenFile(0) < 0)
     {
         LOG(VB_GENERAL, LOG_ERR, LOC + "Could not open file for preview.");
@@ -4497,34 +4534,39 @@ char *MythPlayer::GetScreenGrabAtFrame(uint64_t frameNum, bool absolute,
 
     if (!(frame = videoOutput->GetLastDecodedFrame()))
     {
-        bufflen = 0;
-        vw = vh = 0;
-        ar = 0;
         return NULL;
     }
 
-    if (!(data = frame->buf))
+    while (1)
     {
-        bufflen = 0;
-        vw = vh = 0;
-        ar = 0;
-        DiscardVideoFrame(frame);
-        return NULL;
+        if (!(data = frame->buf))
+        {
+            break;
+        }
+
+        AVPictureFill(&orig, frame);
+        float par = frame->aspect * video_dim.height() / video_dim.width();
+        MythPictureDeinterlacer deinterlacer(AV_PIX_FMT_YUV420P,
+                                             video_dim.width(), video_dim.height(),
+                                             par);
+        if (deinterlacer.DeinterlaceSingle(&orig, &orig) < 0)
+        {
+            break;
+        }
+
+        bufflen = video_dim.width() * video_dim.height() * 4;
+        outputbuf = new unsigned char[bufflen];
+        copyCtx.Copy(&retbuf, frame, outputbuf, AV_PIX_FMT_RGB32);
+
+        vw = video_disp_dim.width();
+        vh = video_disp_dim.height();
+        ar = frame->aspect;
+        break;
     }
-
-    AVPictureFill(&orig, frame);
-    avpicture_deinterlace(&orig, &orig, PIX_FMT_YUV420P,
-                          video_dim.width(), video_dim.height());
-
-    bufflen = video_dim.width() * video_dim.height() * 4;
-    outputbuf = new unsigned char[bufflen];
-    copyCtx.Copy(&retbuf, frame, outputbuf, AV_PIX_FMT_RGB32);
-
-    vw = video_disp_dim.width();
-    vh = video_disp_dim.height();
-    ar = frame->aspect;
-
-    DiscardVideoFrame(frame);
+    if (frame)
+    {
+        DiscardVideoFrame(frame);
+    }
     return (char *)outputbuf;
 }
 
@@ -5175,7 +5217,8 @@ InteractiveTV *MythPlayer::GetInteractiveTV(void)
     {
         QMutexLocker locker1(&osdLock);
         QMutexLocker locker2(&itvLock);
-        interactiveTV = new InteractiveTV(this);
+        if (!interactiveTV && osd)
+            interactiveTV = new InteractiveTV(this);
     }
 #endif // USING_MHEG
     return interactiveTV;
@@ -5214,6 +5257,7 @@ void MythPlayer::ITVRestart(uint chanid, uint cardid, bool isLiveTV)
 // Called from the interactiveTV (MHIContext) thread
 void MythPlayer::SetVideoResize(const QRect &videoRect)
 {
+    QMutexLocker locker(&osdLock);
     if (videoOutput)
         videoOutput->SetVideoResize(videoRect);
 }

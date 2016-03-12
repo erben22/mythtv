@@ -24,11 +24,13 @@ using namespace std;
 #include "mpeg2fix.h"
 #include "remotefile.h"
 #include "mythtranslation.h"
+#include "loggingserver.h"
 #include "mythlogging.h"
 #include "commandlineparser.h"
 #include "recordinginfo.h"
 #include "signalhandling.h"
 #include "HLS/httplivestream.h"
+#include "cleanupguard.h"
 
 static void CompleteJob(int jobID, ProgramInfo *pginfo, bool useCutlist,
                         frm_dir_map_t *deleteMap, int &exitCode,
@@ -139,24 +141,6 @@ namespace
         gContext = NULL;
         SignalHandler::Done();
     }
-
-    class CleanupGuard
-    {
-      public:
-        typedef void (*CleanupFunc)();
-
-      public:
-        CleanupGuard(CleanupFunc cleanFunction) :
-            m_cleanFunction(cleanFunction) {}
-
-        ~CleanupGuard()
-        {
-            m_cleanFunction();
-        }
-
-      private:
-        CleanupFunc m_cleanFunction;
-    };
 }
 
 int main(int argc, char *argv[])
@@ -245,7 +229,7 @@ int main(int argc, char *argv[])
     if (cmdline.toBool("profile"))
         profilename = cmdline.toString("profile");
 
-    if (cmdline.toBool("usecutlist"))    
+    if (cmdline.toBool("usecutlist"))
     {
         useCutlist = true;
         if (!cmdline.toString("usecutlist").isEmpty())
@@ -394,7 +378,7 @@ int main(int argc, char *argv[])
     signallist << SIGRTMIN;
 #endif
     SignalHandler::Init(signallist);
-    signal(SIGHUP, SIG_IGN);
+    SignalHandler::SetHandler(SIGHUP, logSigHup);
 #endif
 
     //  Load the context
@@ -915,7 +899,7 @@ static void CompleteJob(int jobID, ProgramInfo *pginfo, bool useCutlist,
 
         QFileInfo st(tmpfile);
         qint64 newSize = 0;
-        if (st.exists()) 
+        if (st.exists())
             newSize = st.size();
 
         QString cnf = filename;

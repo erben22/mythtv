@@ -1,8 +1,5 @@
 // -*- Mode: c++ -*-
 
-// Std C headers
-#include <time.h>
-
 // Std C++ headers
 #include <algorithm>
 using namespace std;
@@ -33,7 +30,7 @@ static uint get_chan_id_from_db_dvb(uint sourceid,  uint serviceid,
                                     uint networkid, uint transportid);
 static uint get_chan_id_from_db_dtv(uint sourceid,
                                     uint programnumber, uint tunedchanid);
-static void init_fixup(QMap<uint64_t,uint> &fix);
+static void init_fixup(FixupMap &fix);
 
 #define LOC QString("EITHelper: ")
 
@@ -109,10 +106,10 @@ uint EITHelper::ProcessEvents(void)
     return insertCount;
 }
 
-void EITHelper::SetFixup(uint atsc_major, uint atsc_minor, uint eitfixup)
+void EITHelper::SetFixup(uint atsc_major, uint atsc_minor, FixupValue eitfixup)
 {
     QMutexLocker locker(&eitList_lock);
-    uint atsc_key = (atsc_major << 16) | atsc_minor;
+    FixupKey atsc_key = (atsc_major << 16) | atsc_minor;
     fixup[atsc_key] = eitfixup;
 }
 
@@ -241,10 +238,10 @@ void EITHelper::AddETT(uint atsc_major, uint atsc_minor,
     elist.insert(ett->EventID(), ATSCEtt(next_ett_text));
 }
 
-static void parse_dvb_event_descriptors(desc_list_t list, uint fix,
+static void parse_dvb_event_descriptors(desc_list_t list, FixupValue fix,
                                         QMap<uint,uint> languagePreferences,
                                         QString &title, QString &subtitle,
-                                        QString &description)
+                                        QString &description, QMap<QString,QString> &items)
 {
     const unsigned char *bestShortEvent =
         MPEGDescriptor::FindBestMatch(
@@ -332,6 +329,9 @@ static void parse_dvb_event_descriptors(desc_list_t list, uint fix,
             description += eed.Text(enc, enc_len);
         else
             description += eed.Text();
+
+        // add items from the decscriptor to the items
+        items.unite (eed.Items());
     }
 }
 
@@ -374,14 +374,14 @@ void EITHelper::AddEIT(const DVBEventInformationTable *eit)
         return;
 
     uint descCompression = (eit->TableID() > 0x80) ? 2 : 1;
-    uint fix = fixup.value((uint64_t)eit->OriginalNetworkID() << 16);
-    fix |= fixup.value((((uint64_t)eit->TSID()) << 32) |
-                 ((uint64_t)eit->OriginalNetworkID() << 16));
-    fix |= fixup.value(((uint64_t)eit->OriginalNetworkID() << 16) |
-                 (uint64_t)eit->ServiceID());
-    fix |= fixup.value((((uint64_t)eit->TSID()) << 32) |
-                 ((uint64_t)eit->OriginalNetworkID() << 16) |
-                  (uint64_t)eit->ServiceID());
+    FixupValue fix = fixup.value((FixupKey)eit->OriginalNetworkID() << 16);
+    fix |= fixup.value((((FixupKey)eit->TSID()) << 32) |
+                 ((FixupKey)eit->OriginalNetworkID() << 16));
+    fix |= fixup.value(((FixupKey)eit->OriginalNetworkID() << 16) |
+                 (FixupKey)eit->ServiceID());
+    fix |= fixup.value((((FixupKey)eit->TSID()) << 32) |
+                 ((FixupKey)eit->OriginalNetworkID() << 16) |
+                  (FixupKey)eit->ServiceID());
     fix |= EITFixUp::kFixGenericDVB;
 
     uint tableid   = eit->TableID();
@@ -402,6 +402,7 @@ void EITHelper::AddEIT(const DVBEventInformationTable *eit)
         ProgramInfo::CategoryType category_type = ProgramInfo::kCategoryNone;
         unsigned char subtitle_type=0, audio_props=0, video_props=0;
         uint season = 0, episode = 0, totalepisodes = 0;
+        QMap<QString,QString> items;
 
         // Parse descriptors
         desc_list_t list = MPEGDescriptor::Parse(
@@ -433,7 +434,7 @@ void EITHelper::AddEIT(const DVBEventInformationTable *eit)
         else
         {
             parse_dvb_event_descriptors(list, fix, languagePreferences,
-                                        title, subtitle, description);
+                                        title, subtitle, description, items);
         }
 
         parse_dvb_component_descriptors(list, subtitle_type, audio_props,
@@ -692,6 +693,7 @@ void EITHelper::AddEIT(const DVBEventInformationTable *eit)
             video_props, stars,
             seriesId,  programId,
             season, episode, totalepisodes);
+        event->items = items;
 
         db_events.enqueue(event);
     }
@@ -702,7 +704,7 @@ void EITHelper::AddEIT(const DVBEventInformationTable *eit)
 void EITHelper::AddEIT(const PremiereContentInformationTable *cit)
 {
     // set fixup for Premiere
-    uint fix = fixup.value(133 << 16);
+    FixupValue fix = fixup.value(133 << 16);
     fix |= EITFixUp::kFixGenericDVB;
 
     QString title         = QString("");
@@ -712,13 +714,14 @@ void EITHelper::AddEIT(const PremiereContentInformationTable *cit)
     ProgramInfo::CategoryType category_type = ProgramInfo::kCategoryNone;
     unsigned char subtitle_type=0, audio_props=0, video_props=0;
     uint season = 0, episode = 0, totalepisodes = 0;
+    QMap<QString,QString> items;
 
     // Parse descriptors
     desc_list_t list = MPEGDescriptor::Parse(
         cit->Descriptors(), cit->DescriptorsLength());
 
     parse_dvb_event_descriptors(list, fix, languagePreferences,
-                                title, subtitle, description);
+                                title, subtitle, description, items);
 
     parse_dvb_component_descriptors(list, subtitle_type, audio_props,
                                     video_props);
@@ -801,6 +804,7 @@ void EITHelper::AddEIT(const PremiereContentInformationTable *cit)
                 video_props, 0.0,
                 "",  "",
                 season, episode, totalepisodes);
+            event->items = items;
 
             db_events.enqueue(event);
         }
@@ -1048,7 +1052,7 @@ static uint get_chan_id_from_db_dtv(uint sourceid, uint serviceid,
     return useOnAirGuide ? chanid : 0;
 }
 
-static void init_fixup(QMap<uint64_t,uint> &fix)
+static void init_fixup(FixupMap &fix)
 {
     ///////////////////////////////////////////////////////////////////////////
     // Fixups to make EIT provided listings more useful
@@ -1072,18 +1076,19 @@ static void init_fixup(QMap<uint64_t,uint> &fix)
     fix[ 9018U << 16] = EITFixUp::kFixUK;
 
     // UK - Astra 28.2
-    for (int i = 2001; i <= 2040; ++i)
+    for (int i = 2001; i <= 2035; ++i)
        fix[ (long long)i << 32 | 2U << 16] = EITFixUp::kFixUK;
 
     fix[ 2036LL << 32 | 2U << 16] = EITFixUp::kFixUK | EITFixUp::kFixHTML;
 
-    for (int i = 2041; i <= 2057; ++i)
+    for (int i = 2037; i <= 2057; ++i)
        fix[ (long long)i << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2061LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2063LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2064LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2066LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2068LL << 32 | 2U << 16] = EITFixUp::kFixUK;
+    fix[ 2069LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2076LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2081LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2096LL << 32 | 2U << 16] = EITFixUp::kFixUK | EITFixUp::kFixHTML;
@@ -1339,6 +1344,25 @@ static void init_fixup(QMap<uint64_t,uint> &fix)
     // on this transport are only HD services, two TBD, arte and ServusTV, I think arte properly signals HD!
     fix[ 9999 << 16 |   401LL << 32 | 29109 ] = // ServusTV HD
         EITFixUp::kFixHDTV;
+    // generic Unitymedia / Liberty Global / Eventis.nl?
+    fix[ 9999 << 16 |   121LL << 32 | 12107 ] = // Super RTL
+    fix[ 9999 << 16 |   151LL << 32 | 15110 ] = // Bibel TV
+    fix[ 9999 << 16 |   161LL << 32 | 12107 ] = // Super RTL
+    fix[ 9999 << 16 |   161LL << 32 | 12109 ] = // n-tv
+    fix[ 9999 << 16 |   171LL << 32 | 17119 ] = // RiC
+    fix[ 9999 << 16 |   171LL << 32 | 27102 ] = // DELUXE MUSIC
+    fix[ 9999 << 16 |   181LL << 32 | 24108 ] = // DMAX
+    fix[ 9999 << 16 |   181LL << 32 | 25102 ] = // TV5MONDE Europe
+    fix[ 9999 << 16 |   191LL << 32 | 11102 ] = // Disney SD
+    fix[ 9999 << 16 |   191LL << 32 | 12110 ] = // N24
+    fix[ 9999 << 16 |   191LL << 32 | 12111 ] = // Tele 5
+    fix[ 9999 << 16 |   201LL << 32 | 27103 ] = // TLC
+    fix[ 9999 << 16 |   211LL << 32 | 29108 ] = // Astro TV
+    fix[ 9999 << 16 |   231LL << 32 | 23117 ] = // Deutsches Musik Fernsehen
+    fix[ 9999 << 16 |   231LL << 32 | 23115 ] = // Family TV
+    fix[ 9999 << 16 |   271LL << 32 | 27101 ] = // DIE NEUE ZEIT TV
+    fix[ 9999 << 16 |   541LL << 32 | 54101 ] = // HR HD
+        EITFixUp::kFixUnitymedia;
 
     // DVB-S Astra 19.2E DMAX Germany
     fix[  1113LL << 32 | 1 << 16 | 12602] = EITFixUp::kEFixForceISO8859_15;

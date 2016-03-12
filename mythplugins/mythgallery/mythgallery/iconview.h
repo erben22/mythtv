@@ -61,6 +61,7 @@ class IconView : public MythScreenType
     bool keyPressEvent(QKeyEvent *);
     void customEvent(QEvent*);
     void HandleRandomShow(void);
+    void HandleSeasonalShow(void);
 
     QString GetError(void) { return m_errorStr; }
 
@@ -160,7 +161,7 @@ class IconView : public MythScreenType
     friend class FileCopyThread;
 };
 
-typedef struct 
+typedef struct
 {
     QString fileName;
     int count;
@@ -169,7 +170,7 @@ typedef struct
 class ChildCountEvent : public QEvent
 {
   public:
-    ChildCountEvent(ChildCountData *ccd) :
+    explicit ChildCountEvent(ChildCountData *ccd) :
         QEvent(kEventType), childCountData(ccd) {}
     ~ChildCountEvent() {}
 
@@ -182,7 +183,7 @@ class ChildCountThread : public MThread
 {
 public:
 
-    ChildCountThread(QObject *parent);
+    explicit ChildCountThread(QObject *parent);
     ~ChildCountThread();
 
     void addFile(const QString &fileName);
@@ -204,7 +205,7 @@ private:
 class ImportThread: public MThread
 {
     public:
-        ImportThread(const QString &cmd);
+        explicit ImportThread(const QString &cmd);
         virtual void run();
     private:
         QString m_command;

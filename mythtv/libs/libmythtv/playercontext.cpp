@@ -408,6 +408,9 @@ bool PlayerContext::CreatePlayer(TV *tv, QWidget *widget,
     audio->SetStretchFactor(ts_normal);
     player->SetLength(playingLen);
 
+    player->AdjustAudioTimecodeOffset(
+                0, gCoreContext->GetNumSetting("AudioSyncOffset", 0));
+
     player->SetVideoFilters((useNullVideo) ? "onefield" : "");
 
     bool isWatchingRecording = (desiredState == kState_WatchingRecording);
@@ -511,8 +514,12 @@ bool PlayerContext::ReloadTVChain(void)
     {
         SetPlayingInfo(pinfo);
         delete pinfo;
+        return true;
     }
-    return (bool) pinfo;
+    else
+    {
+        return false;
+    }
 }
 
 /**

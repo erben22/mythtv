@@ -95,6 +95,7 @@ EITFixUp::EITFixUp()
       m_ukCompleteDots("^\\.\\.+$"),
       m_ukQuotedSubtitle("(?:^')([\\w\\s\\-,]+)(?:\\.' )"),
       m_ukAllNew("All New To 4Music!\\s?"),
+      m_ukLaONoSplit("^Law & Order: (?:Criminal Intent|LA|Special Victims Unit|Trial by Jury|UK|You the Jury)"),
       m_comHemCountry("^(\\(.+\\))?\\s?([^ ]+)\\s([^\\.0-9]+)"
                       "(?:\\sfr\xE5n\\s([0-9]{4}))(?:\\smed\\s([^\\.]+))?\\.?"),
       m_comHemDirector("[Rr]egi"),
@@ -133,6 +134,10 @@ EITFixUp::EITFixUp()
       m_RTLSubtitle4("^Thema.{0,5}:\\s([^\\.]+)\\.\\s*"),
       m_RTLSubtitle5("^'(.+)'\\.\\s*"),
       m_PRO7Subtitle(",{0,1}([^,]*),([^,]+)\\s{0,1}(\\d{4})$"),
+      m_PRO7Crew("\n\n(Regie:.*)$"),
+      m_PRO7CrewOne("^(.*):\\s+(.*)$"),
+      m_PRO7Cast("\n\nDarsteller:\n(.*)$"),
+      m_PRO7CastOne("^([^\\(]*)\\((.*)\\)$"),
       m_RTLEpisodeNo1("^(Folge\\s\\d{1,4})\\.*\\s*"),
       m_RTLEpisodeNo2("^(\\d{1,2}\\/[IVX]+)\\.*\\s*"),
       m_fiRerun("\\ ?Uusinta[a-zA-Z\\ ]*\\.?"),
@@ -231,7 +236,8 @@ EITFixUp::EITFixUp()
       m_grCategNature("(?:\\W)?(φ[υύ]ση|περιβ[αά]λλο|κατασκευ|επιστ[ηή]μ(?!ονικ[ηή]ς φαντασ[ιί]ας))(?:\\W)?",Qt::CaseInsensitive),
       m_grCategSciFi("(?:\\W)?(επιστ(.|ημονικ[ηή]ς)\\s?φαντασ[ιί]ας)(?:\\W)?",Qt::CaseInsensitive),
       m_grCategHealth("(?:\\W)?(υγε[ιί]α|υγειιν|ιατρικ|διατροφ)(?:\\W)?",Qt::CaseInsensitive),
-      m_grCategSpecial("(?:\\W)?(αφι[εέ]ρωμα)(?:\\W)?",Qt::CaseInsensitive)
+      m_grCategSpecial("(?:\\W)?(αφι[εέ]ρωμα)(?:\\W)?",Qt::CaseInsensitive),
+      m_unitymediaImdbrating("\\s*IMDb Rating: (\\d\\.\\d) /10$")
 {
 }
 
@@ -324,6 +330,9 @@ void EITFixUp::Fix(DBEventEIT &event) const
     if (kFixGreekCategories & event.fixup)
         FixGreekCategories(event);
 
+    if (kFixUnitymedia & event.fixup)
+        FixUnitymedia(event);
+
     if (event.fixup)
     {
         if (!event.title.isEmpty())
@@ -349,6 +358,18 @@ void EITFixUp::Fix(DBEventEIT &event) const
     {
         event.programId = AddDVBEITAuthority(event.chanid, event.programId);
         event.seriesId  = AddDVBEITAuthority(event.chanid, event.seriesId);
+    }
+
+    // Are any items left unhandled? report them to allow fixups improvements
+    if (!event.items.empty())
+    {
+        QMap<QString,QString>::iterator i;
+        for (i = event.items.begin(); i != event.items.end(); ++i)
+        {
+            LOG(VB_EIT, LOG_DEBUG, QString("Unhandled item in EIT for"
+                " channel id \"%1\", \"%2\": %3").arg(event.chanid)
+                .arg(i.key()).arg(i.value()));
+        }
     }
 }
 
@@ -981,6 +1002,7 @@ void EITFixUp::FixUK(DBEventEIT &event) const
 
     QRegExp tmp24ep = m_uk24ep;
     if (!event.title.startsWith("CSI:") && !event.title.startsWith("CD:") &&
+        !event.title.contains(m_ukLaONoSplit) &&
         !event.title.startsWith("Mission: Impossible"))
     {
         if (((position1=event.title.indexOf(m_ukDoubleDotEnd)) != -1) &&
@@ -1050,7 +1072,8 @@ void EITFixUp::FixUK(DBEventEIT &event) const
         }
     }
 
-    if (!isMovie && event.subtitle.isEmpty())
+    if (!isMovie && event.subtitle.isEmpty() &&
+        !event.title.startsWith("The X-Files"))
     {
         if ((position1=event.description.indexOf(m_ukTime)) != -1)
         {
@@ -1766,6 +1789,69 @@ void EITFixUp::FixPRO7(DBEventEIT &event) const
         event.subtitle.replace(tmp, "");
     }
 
+    /* handle cast, the very last in description */
+    tmp = m_PRO7Cast;
+    pos = tmp.indexIn(event.description);
+    if (pos != -1)
+    {
+        QStringList cast = tmp.cap(1).split("\n");
+        QRegExp tmpOne = m_PRO7CastOne;
+        QStringListIterator i(cast);
+        while (i.hasNext())
+        {
+            pos = tmpOne.indexIn (i.next());
+            if (pos != -1)
+            {
+                event.AddPerson (DBPerson::kActor, tmpOne.cap(1).simplified());
+            }
+        }
+        event.description.replace(tmp, "");
+    }
+
+    /* handle crew, the new very last in description
+     * format: "Role: Name" or "Role: Name1, Name2"
+     */
+    tmp = m_PRO7Crew;
+    pos = tmp.indexIn(event.description);
+    if (pos != -1)
+    {
+        QStringList crew = tmp.cap(1).split("\n");
+        QRegExp tmpOne = m_PRO7CrewOne;
+        QStringListIterator i(crew);
+        while (i.hasNext())
+        {
+            pos = tmpOne.indexIn (i.next());
+            if (pos != -1)
+            {
+                DBPerson::Role role = DBPerson::kUnknown;
+                if (QString::compare (tmpOne.cap(1), "Regie") == 0)
+                {
+                    role = DBPerson::kDirector;
+                }
+                else if (QString::compare (tmpOne.cap(1), "Drehbuch") == 0)
+                {
+                    role = DBPerson::kWriter;
+                }
+                else if (QString::compare (tmpOne.cap(1), "Autor") == 0)
+                {
+                    role = DBPerson::kWriter;
+                }
+                // FIXME add more jobs
+
+                QStringList names = tmpOne.cap(2).simplified().split("\\s*,\\s*");
+                QStringListIterator j(names);
+                while (j.hasNext())
+                {
+                    event.AddPerson (role, j.next());
+                }
+            }
+        }
+        event.description.replace(tmp, "");
+    }
+
+    /* FIXME unless its Jamie Oliver, then there is neither Crew nor Cast only
+     * \n\nKoch: Jamie Oliver
+     */
 }
 
 /** \fn EITFixUp::FixFI(DBEventEIT&) const
@@ -2578,13 +2664,12 @@ void EITFixUp::FixGreekEIT(DBEventEIT &event) const
     // Work out the season and episode numbers (if any)
     // Matching pattern "Επεισ[όο]διο:?|Επ 3 από 14|3/14" etc
     bool    series  = false;
-    int position1;
-    int position2;
     QRegExp tmpSeries = m_grSeason;
     // cap(2) is the season for ΑΒΓΔ
     // cap(3) is the season for 1234
-    if ((position1 = tmpSeries.indexIn(event.title)) != -1
-            || (position2 = tmpSeries.indexIn(event.description)) != -1)
+    int position1 = tmpSeries.indexIn(event.title);
+    int position2 = tmpSeries.indexIn(event.description);
+    if ((position1 != -1) || (position2 != -1))
     {
         if (!tmpSeries.cap(2).isEmpty()) // we found a letter representing a number
         {
@@ -2793,4 +2878,71 @@ void EITFixUp::FixGreekCategories(DBEventEIT &event) const
         event.category = "Αφιέρωμα";
     }
 
+}
+
+void EITFixUp::FixUnitymedia(DBEventEIT &event) const
+{
+    // TODO handle scraping the category and category_type from localized text in the short/long description
+    // TODO remove short description (stored as episode title) which is just the beginning of the long description (actual description)
+
+    // drop the short description if its copy the start of the long description
+    if (event.description.startsWith (event.subtitle))
+    {
+        event.subtitle = "";
+    }
+
+    // handle cast and crew in items in the DVB Extended Event Descriptor
+    // remove handled items from the map, so the left overs can be reported
+    QMap<QString,QString>::iterator i = event.items.begin();
+    while (i != event.items.end())
+    {
+        if (QString::compare (i.key(), "Role Player") == 0)
+        {
+            event.AddPerson (DBPerson::kActor, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Director") == 0)
+        {
+            event.AddPerson (DBPerson::kDirector, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Commentary or Commentator") == 0)
+        {
+            event.AddPerson (DBPerson::kCommentator, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Performing Artist") == 0)
+        {
+            event.AddPerson (DBPerson::kActor, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Presenter") == 0)
+        {
+            event.AddPerson (DBPerson::kPresenter, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Producer") == 0)
+        {
+            event.AddPerson (DBPerson::kProducer, i.value());
+            i = event.items.erase (i);
+        }
+        else if (QString::compare (i.key(), "Scriptwriter") == 0)
+        {
+            event.AddPerson (DBPerson::kWriter, i.value());
+            i = event.items.erase (i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
+
+    // handle star rating in the description
+    QRegExp tmp = m_unitymediaImdbrating;
+    if (event.description.indexOf (tmp) != -1)
+    {
+        float stars = tmp.cap(1).toFloat();
+        event.stars = stars / 10.0f;
+        event.description.replace (m_unitymediaImdbrating, "");
+    }
 }

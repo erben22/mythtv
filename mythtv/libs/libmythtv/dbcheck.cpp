@@ -12,7 +12,6 @@ using namespace std;
 #include "schemawizard.h"
 #include "mythdb.h"
 #include "mythlogging.h"
-#include "diseqcsettings.h" // for convert_diseqc_db()
 #include "videodbcheck.h" // for 1267
 #include "compat.h"
 #include "recordingrule.h"
@@ -3076,8 +3075,10 @@ NULL
             "    ADD parentid INT UNSIGNED NOT NULL DEFAULT 0 AFTER cardid",
             "UPDATE capturecard c, "
             "       (SELECT min(cardid) cardid, hostname, videodevice, "
-            "               inputname "
+            "               inputname, cardtype "
             "        FROM capturecard "
+            "        WHERE cardtype NOT IN "
+            "              ('FREEBOX', 'IMPORT', 'DEMO', 'EXTERNAL') "
             "        GROUP BY hostname, videodevice, inputname) mins "
             "SET c.parentid = mins.cardid "
             "WHERE c.hostname = mins.hostname and "
@@ -3215,6 +3216,86 @@ NULL
             NULL
         };
         if (!performActualUpdate(updates, "1342", dbver))
+            return false;
+    }
+
+    if (dbver == "1342")
+    {
+        LOG(VB_GENERAL, LOG_CRIT, "Upgrading to MythTV schema version 1343");
+        MSqlQuery select(MSqlQuery::InitCon());
+        MSqlQuery update(MSqlQuery::InitCon());
+
+        const char *updates[] = {
+            // Delete automatically created inputgroups.
+            "DELETE FROM inputgroup WHERE inputgroupname REGEXP '^[a-z_-]*\\\\|'",
+            // Increase the size of inputgroup.inputgroupname.
+            "ALTER TABLE inputgroup "
+            "    MODIFY COLUMN inputgroupname VARCHAR(128)",
+            NULL
+        };
+
+        if (!performUpdateSeries(updates))
+            return false;
+
+        // Recreate automatically generated inputgroup for each card.
+        select.prepare("SELECT cardid, parentid, cardtype, hostname, "
+                       "       videodevice "
+                       "FROM capturecard c "
+                       "ORDER BY c.cardid");
+        if (!select.exec())
+        {
+            MythDB::DBError("Unable to retrieve cardtids.", select);
+            return false;
+        }
+
+        while (select.next())
+        {
+            uint cardid = select.value(0).toUInt();
+            uint parentid = select.value(1).toUInt();
+            QString type = select.value(2).toString();
+            QString host = select.value(3).toString();
+            QString device = select.value(4).toString();
+            QString name = host + "|" + device;
+            if (type == "FREEBOX" || type == "IMPORT" ||
+                type == "DEMO"    || type == "EXTERNAL")
+                name += QString("|%1").arg(parentid ? parentid : cardid);
+            uint groupid = CardUtil::CreateInputGroup(name);
+            if (!groupid)
+                return false;
+            if (!CardUtil::LinkInputGroup(cardid, groupid))
+                return false;
+        }
+
+        // Remove orphan and administrative inputgroup entries.
+        if (!CardUtil::UnlinkInputGroup(0, 0))
+            return false;
+
+        if (!UpdateDBVersionNumber("1343", dbver))
+            return false;
+    }
+
+    if (dbver == "1343")
+    {
+        const char *updates[] = {
+            "DROP TABLE IF EXISTS bdbookmark;",
+            "CREATE TABLE bdbookmark ("
+            "  serialid varchar(40) NOT NULL DEFAULT '',"
+            "  `name` varchar(128) DEFAULT NULL,"
+            "  bdstate varchar(4096) NOT NULL DEFAULT '',"
+            "  `timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  PRIMARY KEY (serialid)"
+            ") ENGINE=MyISAM DEFAULT CHARSET=utf8;",
+
+            // #12612 strip \0 characters from channel/channelscan_channel callsign and name
+            "UPDATE channel SET callsign=REPLACE(callsign,'\\0',''),"
+            "name=REPLACE(name,'\\0','');",
+
+            // "BackendWSPort" was removed in caaaeef8166722888012f4ecaf3e9b0f09df512a
+            "DELETE FROM settings WHERE value='BackendWSPort';",
+            NULL
+        };
+
+        if (!performActualUpdate(&updates[0], "1344", dbver))
             return false;
     }
 

@@ -27,10 +27,12 @@
 #include "commandlineparser.h"
 #include "compat.h"
 #include "mythsystemevent.h"
+#include "loggingserver.h"
 #include "mythlogging.h"
 #include "signalhandling.h"
 #include "housekeeper.h"
 #include "hardwareprofile.h"
+#include "cleanupguard.h"
 
 #define LOC      QString("MythJobQueue: ")
 #define LOC_WARN QString("MythJobQueue, Warning: ")
@@ -54,27 +56,6 @@ static void cleanup(void)
     }
 
     SignalHandler::Done();
-}
-
-namespace
-{
-    class CleanupGuard
-    {
-      public:
-        typedef void (*CleanupFunc)();
-
-      public:
-        CleanupGuard(CleanupFunc cleanFunction) :
-            m_cleanFunction(cleanFunction) {}
-
-        ~CleanupGuard()
-        {
-            m_cleanFunction();
-        }
-
-      private:
-        CleanupFunc m_cleanFunction;
-    };
 }
 
 int main(int argc, char *argv[])
@@ -120,7 +101,7 @@ int main(int argc, char *argv[])
     signallist << SIGRTMIN;
 #endif
     SignalHandler::Init(signallist);
-    signal(SIGHUP, SIG_IGN);
+    SignalHandler::SetHandler(SIGHUP, logSigHup);
 #endif
 
     gContext = new MythContext(MYTH_BINARY_VERSION);

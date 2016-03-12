@@ -1437,9 +1437,30 @@ void TVRec::run(void)
             }
             else
             {
-                scanner->StartActiveScan(this, eitTransportTimeout);
-                SetFlags(kFlagEITScannerRunning, __FILE__, __LINE__);
-                eitScanStartTime = MythDate::current().addYears(1);
+                // Check if another card in the same input group is
+                // busy.  This could be either virtual DVB-devices or
+                // a second tuner on a single card
+                bool allow_eit = true;
+                vector<uint> inputids =
+                    CardUtil::GetConflictingInputs(inputid);
+                InputInfo busy_input;
+                for (uint i = 0; i < inputids.size() && allow_eit; ++i)
+                    allow_eit = !RemoteIsBusy(inputids[i], busy_input);
+                if (allow_eit)
+                {
+                    scanner->StartActiveScan(this, eitTransportTimeout);
+                    SetFlags(kFlagEITScannerRunning, __FILE__, __LINE__);
+                    eitScanStartTime =
+                        QDateTime::currentDateTime().addYears(1);
+                }
+                else
+                {
+                    LOG(VB_CHANNEL, LOG_INFO, LOC + QString(
+                            "Postponing EIT scan on input %1 "
+                            "because input %2 is busy")
+                        .arg(inputid).arg(busy_input.inputid));
+                    eitScanStartTime = eitScanStartTime.addSecs(300);
+                }
             }
         }
 
@@ -1838,7 +1859,7 @@ bool TVRec::SetupDTVSignalMonitor(bool EITscan)
     QString recording_type = "all";
     RecordingInfo *rec = lastTuningRequest.program;
     RecordingProfile profile;
-    recProfileName = LoadProfile(genOpt.inputtype, tvchain, rec, profile);
+    recProfileName = LoadProfile(tvchain, rec, profile);
     const Setting *setting = profile.byName("recordingtype");
     if (setting)
         recording_type = setting->getValue();
@@ -2752,7 +2773,7 @@ void TVRec::InitAutoRunJobs(RecordingInfo *rec, AutoRunInitType t,
         RecordingProfile profile;
         if (!recpro)
         {
-            LoadProfile(genOpt.inputtype, NULL, rec, profile);
+            LoadProfile(NULL, rec, profile);
             recpro = &profile;
         }
         autoRunJobs[rec->MakeUniqueKey()] =
@@ -3661,6 +3682,8 @@ void TVRec::TuningShutdowns(const TuningRequest &request)
  */
 void TVRec::TuningFrequency(const TuningRequest &request)
 {
+    LOG(VB_GENERAL, LOG_INFO, LOC + "TuningFrequency");
+
     DTVChannel *dtvchan = GetDTVChannel();
     if (dtvchan)
     {
@@ -3695,6 +3718,15 @@ void TVRec::TuningFrequency(const TuningRequest &request)
 
     if (request.IsOnSameMultiplex())
     {
+        // Update the channel number for SwitchLiveTVRingBuffer (called from
+        // TuningRestartRecorder).  This ensures that the livetvchain will be
+        // updated with the new channel number
+        if (channel)
+        {
+            channel->Renumber( CardUtil::GetSourceID(channel->GetInputID()),
+                               channel->GetChannelName(), request.channel );
+        }
+
         QStringList slist;
         slist<<"message"<<QObject::tr("On known multiplex...");
         MythEvent me(QString("SIGNAL %1").arg(inputid), slist);
@@ -4093,8 +4125,8 @@ static int init_jobs(const RecordingInfo *rec, RecordingProfile &profile,
     return jobs;
 }
 
-QString TVRec::LoadProfile(QString inputtype, void *tvchain,
-                           RecordingInfo *rec, RecordingProfile &profile)
+QString TVRec::LoadProfile(void *tvchain, RecordingInfo *rec,
+                           RecordingProfile &profile)
 {
     // Determine the correct recording profile.
     // In LiveTV mode use "Live TV" profile, otherwise use the
@@ -4106,7 +4138,8 @@ QString TVRec::LoadProfile(QString inputtype, void *tvchain,
 
     QString profileRequested = profileName;
 
-    if (profile.loadByType(profileName, inputtype))
+    if (profile.loadByType(profileName, genOpt.inputtype,
+                           genOpt.videodev))
     {
         LOG(VB_RECORD, LOG_INFO, LOC +
             QString("Using profile '%1' to record")
@@ -4115,7 +4148,7 @@ QString TVRec::LoadProfile(QString inputtype, void *tvchain,
     else
     {
         profileName = "Default";
-        if (profile.loadByType(profileName, inputtype))
+        if (profile.loadByType(profileName, genOpt.inputtype, genOpt.videodev))
         {
             LOG(VB_RECORD, LOG_INFO, LOC +
                 QString("Profile '%1' not found, using "
@@ -4154,7 +4187,7 @@ void TVRec::TuningNewRecorder(MPEGStreamData *streamData)
     RecordingInfo *rec = lastTuningRequest.program;
 
     RecordingProfile profile;
-    recProfileName = LoadProfile(genOpt.inputtype, tvchain, rec, profile);
+    recProfileName = LoadProfile(tvchain, rec, profile);
 
     if (tvchain)
     {
@@ -4211,6 +4244,7 @@ void TVRec::TuningNewRecorder(MPEGStreamData *streamData)
     if (channel && genOpt.inputtype == "MJPEG")
         channel->Close(); // Needed because of NVR::MJPEGInit()
 
+    LOG(VB_GENERAL, LOG_INFO, LOC + "TuningNewRecorder - CreateRecorder()");
     recorder = RecorderBase::CreateRecorder(
         this, channel, profile, genOpt, dvbOpt);
 
@@ -4264,13 +4298,11 @@ void TVRec::TuningNewRecorder(MPEGStreamData *streamData)
                                   channel->GetChannelName());
     }
 
-#ifdef USING_V4L2
     if (GetV4LChannel())
     {
         channel->InitPictureAttributes();
         CloseChannel();
     }
-#endif
 
     recorderThread = new MThread("RecThread", recorder);
     recorderThread->start();
@@ -4740,7 +4772,7 @@ RecordingInfo *TVRec::SwitchRecordingRingBuffer(const RecordingInfo &rcinfo)
     RecordingInfo   *ri = new RecordingInfo(rcinfo);
     RecordingProfile profile;
 
-    QString pn = LoadProfile(genOpt.inputtype, NULL, ri, profile);
+    QString pn = LoadProfile(NULL, ri, profile);
 
     if (pn != recProfileName)
     {

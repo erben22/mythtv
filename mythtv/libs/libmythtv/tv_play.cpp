@@ -337,6 +337,7 @@ bool TV::StartTV(ProgramInfo *tvrec, uint flags,
     bool playCompleted = false;
     ProgramInfo *curProgram = NULL;
     bool startSysEventSent = false;
+    bool startLivetvEventSent = false;
 
     if (tvrec)
     {
@@ -398,6 +399,7 @@ bool TV::StartTV(ProgramInfo *tvrec, uint flags,
             else if (!startSysEventSent)
             {
                 startSysEventSent = true;
+                startLivetvEventSent = true;
                 gCoreContext->SendSystemEvent("LIVETV_STARTED");
             }
 
@@ -452,7 +454,9 @@ bool TV::StartTV(ProgramInfo *tvrec, uint flags,
     }
 
     LOG(VB_PLAYBACK, LOG_INFO, LOC + "-- process events 2 begin");
-    qApp->processEvents();
+    do
+        qApp->processEvents();
+    while (tv->isEmbedded);
     LOG(VB_PLAYBACK, LOG_INFO, LOC + "-- process events 2 end");
 
     // check if the show has reached the end.
@@ -504,6 +508,9 @@ bool TV::StartTV(ProgramInfo *tvrec, uint flags,
     }
 
     GetMythMainWindow()->PauseIdleTimer(false);
+
+    if (startLivetvEventSent)
+        gCoreContext->SendSystemEvent("LIVETV_ENDED");
 
     LOG(VB_PLAYBACK, LOG_DEBUG, LOC + "-- end");
 
@@ -856,6 +863,18 @@ void TV::InitKeys(void)
             "Zoom mode - zoom in"), "");
     REG_KEY("TV Playback", ACTION_ZOOMOUT, QT_TRANSLATE_NOOP("MythControls",
             "Zoom mode - zoom out"), "");
+    REG_KEY("TV Playback", ACTION_ZOOMVERTICALIN,
+            QT_TRANSLATE_NOOP("MythControls",
+                              "Zoom mode - vertical zoom in"), "8");
+    REG_KEY("TV Playback", ACTION_ZOOMVERTICALOUT,
+            QT_TRANSLATE_NOOP("MythControls",
+                              "Zoom mode - vertical zoom out"), "2");
+    REG_KEY("TV Playback", ACTION_ZOOMHORIZONTALIN,
+            QT_TRANSLATE_NOOP("MythControls",
+                              "Zoom mode - horizontal zoom in"), "6");
+    REG_KEY("TV Playback", ACTION_ZOOMHORIZONTALOUT,
+            QT_TRANSLATE_NOOP("MythControls",
+                              "Zoom mode - horizontal zoom out"), "4");
     REG_KEY("TV Playback", ACTION_ZOOMQUIT, QT_TRANSLATE_NOOP("MythControls",
             "Zoom mode - quit and abandon changes"), "");
     REG_KEY("TV Playback", ACTION_ZOOMCOMMIT, QT_TRANSLATE_NOOP("MythControls",
@@ -1141,7 +1160,7 @@ void TV::InitFromDB(void)
 
     screenPressKeyMapPlayback = ConvertScreenPressKeyMap(kv["PlaybackScreenPressKeyMap"]);
     screenPressKeyMapLiveTV = ConvertScreenPressKeyMap(kv["LiveTVScreenPressKeyMap"]);
-    
+
     QString db_channel_ordering;
     uint    db_browse_max_forward;
 
@@ -3031,8 +3050,12 @@ void TV::timerEvent(QTimerEvent *te)
         {
             OSD *osd = GetOSDLock(actx);
             if (osd && !osd->IsWindowVisible("osd_input"))
+            {
+                ReturnOSDLock(actx, osd);
                 CommitQueuedInput(actx);
-            ReturnOSDLock(actx, osd);
+            }
+            else
+                ReturnOSDLock(actx, osd);
         }
         ReturnPlayerLock(actx);
 
@@ -3850,7 +3873,7 @@ static bool SysEventHandleAction(QKeyEvent *e, const QStringList &actions)
 QList<QKeyEvent> TV::ConvertScreenPressKeyMap(const QString &keyList)
 {
     QList<QKeyEvent> keyPressList;
-    int i;
+    int i = 0;
     QStringList stringKeyList = keyList.split(',');
     QStringList::const_iterator it;
     for (it = stringKeyList.begin(); it != stringKeyList.end(); ++it)
@@ -3859,7 +3882,7 @@ QList<QKeyEvent> TV::ConvertScreenPressKeyMap(const QString &keyList)
         for(i = 0; i < keySequence.count(); i++)
         {
             unsigned int keynum = keySequence[i];
-            QKeyEvent keyEvent(QEvent::None, 
+            QKeyEvent keyEvent(QEvent::None,
                                (int)(keynum & ~Qt::KeyboardModifierMask),
                                (Qt::KeyboardModifiers)(keynum & Qt::KeyboardModifierMask));
             keyPressList.append(keyEvent);
@@ -3877,7 +3900,7 @@ QList<QKeyEvent> TV::ConvertScreenPressKeyMap(const QString &keyList)
     return keyPressList;
 }
 
-bool TV::TranslateGesture(const QString &context, MythGestureEvent *e, 
+bool TV::TranslateGesture(const QString &context, MythGestureEvent *e,
                           QStringList &actions, bool isLiveTV)
 {
     if (context == "TV Playback")
@@ -3948,8 +3971,8 @@ bool TV::ProcessKeypressOrGesture(PlayerContext *actx, QEvent *e)
 
 #ifdef Q_OS_LINUX
     // Fixups for _some_ linux native codes that QT doesn't know
-    if (dynamic_cast<QKeyEvent*>(e)) {
-        QKeyEvent* eKeyEvent = dynamic_cast<QKeyEvent*>(e);
+    QKeyEvent* eKeyEvent = dynamic_cast<QKeyEvent*>(e);
+    if (eKeyEvent) {
         if (eKeyEvent->key() <= 0)
         {
             int keycode = 0;
@@ -3978,7 +4001,7 @@ bool TV::ProcessKeypressOrGesture(PlayerContext *actx, QEvent *e)
 
     TVState state = GetState(actx);
     bool isLiveTV = StateIsLiveTV(state);
-    
+
     if (ignoreKeys)
     {
         handled = TranslateKeyPressOrGesture("TV Playback", e, actions, isLiveTV);
@@ -4278,6 +4301,14 @@ bool TV::ManualZoomHandleAction(PlayerContext *actx, const QStringList &actions)
         zoom = kZoomIn;
     else if (has_action(ACTION_ZOOMOUT, actions))
         zoom = kZoomOut;
+    else if (has_action(ACTION_ZOOMVERTICALIN, actions))
+        zoom = kZoomVerticalIn;
+    else if (has_action(ACTION_ZOOMVERTICALOUT, actions))
+        zoom = kZoomVerticalOut;
+    else if (has_action(ACTION_ZOOMHORIZONTALIN, actions))
+        zoom = kZoomHorizontalIn;
+    else if (has_action(ACTION_ZOOMHORIZONTALOUT, actions))
+        zoom = kZoomHorizontalOut;
     else if (has_action(ACTION_ZOOMQUIT, actions))
     {
         zoom = kZoomHome;
@@ -8742,6 +8773,10 @@ vector<bool> TV::DoSetPauseState(PlayerContext *lctx, const vector<bool> &pause)
 
 void TV::DoEditSchedule(int editType)
 {
+    // Prevent nesting of the pop-up UI
+    if (ignoreKeyPresses)
+        return;
+
     if ((editType == kScheduleProgramGuide  && !RunProgramGuidePtr) ||
         (editType == kScheduleProgramFinder && !RunProgramFinderPtr) ||
         (editType == kScheduledRecording    && !RunScheduleEditorPtr) ||
@@ -9836,14 +9871,14 @@ void TV::customEvent(QEvent *e)
         DoSetPauseState(actx, saved_pause); // Restore pause states
         disableDrawUnusedRects = false;
 
-        qApp->processEvents();
-
         if (!weDisabledGUI)
         {
             weDisabledGUI = true;
             GetMythMainWindow()->PushDrawDisabled();
-            DrawUnusedRects();
         }
+
+        qApp->processEvents();
+        DrawUnusedRects();
 
         isEmbedded = false;
         ignoreKeyPresses = false;
@@ -10039,6 +10074,17 @@ void TV::HandleOSDClosed(int osdType)
             break;
         case kOSDFunctionalType_AudioSyncAdjust:
             audiosyncAdjustment = false;
+            {
+            PlayerContext *ctx = GetPlayerReadLock(0, __FILE__, __LINE__);
+            ctx->LockDeletePlayer(__FILE__, __LINE__);
+            if (ctx->player)
+            {
+                int64_t aoff = ctx->player->GetAudioTimecodeOffset();
+                gCoreContext->SaveSetting("AudioSyncOffset", QString::number(aoff));
+            }
+            ctx->UnlockDeletePlayer(__FILE__, __LINE__);
+            ReturnPlayerLock(ctx);
+            }
             break;
         case kOSDFunctionalType_SubtitleZoomAdjust:
             subtitleZoomAdjustment = false;

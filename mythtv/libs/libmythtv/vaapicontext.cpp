@@ -48,12 +48,18 @@ QString profileToString(VAProfile profile)
     if (VAProfileVC1Main == profile)                    return "VC1Main";
     if (VAProfileVC1Advanced == profile)                return "VC1Advanced";
     if (VAProfileH263Baseline == profile)               return "H263Base";
+
 #if VA_CHECK_VERSION(0,34,0)
     if (VAProfileNone == profile)                       return "None";
 #endif
 #if VA_CHECK_VERSION(0,36,0)
     if (VAProfileH264StereoHigh == profile)             return "H264StereoHigh";
 #endif
+#if VA_CHECK_VERSION(0,38,0)
+    if (VAProfileHEVCMain == profile)                   return "HEVCMain";
+    if (VAProfileHEVCMain10 == profile)                 return "HEVCMain10";
+#endif
+
     return "Unknown";
 }
 
@@ -79,7 +85,10 @@ VAProfile preferredProfile(MythCodecID codec)
     if (kCodec_VC1_VAAPI   == codec) return VAProfileVC1Advanced;
     if (kCodec_WMV3_VAAPI  == codec) return VAProfileVC1Main;
     if (kCodec_MPEG2_VAAPI == codec) return VAProfileMPEG2Main;
-    if (kCodec_MPEG1_VAAPI == codec) return VAProfileMPEG2Main;
+#if VA_CHECK_VERSION(0,38,0)
+    if (kCodec_HEVC_VAAPI  == codec) return VAProfileHEVCMain;
+#endif
+    // NB Ffmpeg 1.2.2 doesn't support MPEG1 with VAAPI pix_fmts
     return VAProfileMPEG2Simple; // error
 }
 
@@ -241,14 +250,14 @@ QMutex VAAPIDisplay::s_VAAPIDisplayLock(QMutex::Recursive);
 VAAPIDisplay *VAAPIDisplay::s_VAAPIDisplay = NULL;
 
 bool VAAPIContext::IsFormatAccelerated(QSize size, MythCodecID codec,
-                                       PixelFormat &pix_fmt)
+                                       AVPixelFormat &pix_fmt)
 {
     bool result = false;
     VAAPIContext *ctx = new VAAPIContext(kVADisplayX11, codec);
     if (ctx->CreateDisplay(size, true))
     {
         pix_fmt = ctx->GetPixelFormat();
-        result = pix_fmt == PIX_FMT_VAAPI_VLD;
+        result = pix_fmt == AV_PIX_FMT_VAAPI_VLD;
     }
     delete ctx;
     return result;
@@ -261,7 +270,7 @@ VAAPIContext::VAAPIContext(VAAPIDisplayType display_type,
     m_display(NULL),
     m_vaProfile(VAProfileMPEG2Main)/* ?? */,
     m_vaEntrypoint(VAEntrypointEncSlice),
-    m_pix_fmt(PIX_FMT_YUV420P), m_numSurfaces(NUM_VAAPI_BUFFERS),
+    m_pix_fmt(AV_PIX_FMT_YUV420P), m_numSurfaces(NUM_VAAPI_BUFFERS),
     m_surfaces(NULL), m_surfaceData(NULL), m_pictureAttributes(NULL),
     m_pictureAttributeCount(0), m_hueBase(0), m_deriveSupport(false),
     m_copy(NULL)
@@ -577,7 +586,7 @@ bool VAAPIContext::InitProfiles(void)
     m_vaProfile = profile_wanted;
     m_vaEntrypoint = entry_found;
     if (VAEntrypointVLD == m_vaEntrypoint)
-        m_pix_fmt = PIX_FMT_VAAPI_VLD;
+        m_pix_fmt = AV_PIX_FMT_VAAPI_VLD;
     return true;
 }
 

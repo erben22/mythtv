@@ -750,7 +750,7 @@ uint OpenGLVideo::CreateVideoTexture(QSize size, QSize &tex_size)
     {
         tmp_tex = gl_context->CreateTexture(size, use_pbo, textureType,
                                             GL_UNSIGNED_SHORT_8_8_MESA,
-                                            GL_YCBCR_MESA, GL_YCBCR_MESA);
+                                            GL_YCBCR_MESA, GL_RGBA);
     }
     else if (GL_YCBCR_422_APPLE == videoTextureType)
     {
@@ -869,12 +869,12 @@ void OpenGLVideo::UpdateInputFrame(const VideoFrame *frame, bool soft_bob)
     {
         // software conversion
         AVPicture img_out;
-        PixelFormat out_fmt = PIX_FMT_BGRA;
+        AVPixelFormat out_fmt = AV_PIX_FMT_BGRA;
         if ((GL_YCBCR_MESA == videoTextureType) ||
             (GL_YCBCR_422_APPLE == videoTextureType) ||
             (MYTHTV_UYVY == videoTextureType))
         {
-            out_fmt = PIX_FMT_UYVY422;
+            out_fmt = AV_PIX_FMT_UYVY422;
         }
         m_copyCtx.Copy(&img_out, frame, (unsigned char*)buf, out_fmt);
     }

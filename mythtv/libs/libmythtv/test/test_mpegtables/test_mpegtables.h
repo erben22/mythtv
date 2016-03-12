@@ -20,9 +20,6 @@
 
 #include <QtTest/QtTest>
 
-#include "mpegtables.h"
-#include "dvbtables.h"
-
 #if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
 #define MSKIP(MSG) QSKIP(MSG, SkipSingle)
 #else
@@ -31,6 +28,7 @@
 
 /* test data */
 extern unsigned char eit_data_0000[];
+extern unsigned char tvct_data_0000[];
 
 class TestMPEGTables: public QObject
 {
@@ -74,4 +72,12 @@ class TestMPEGTables: public QObject
     /** test ParentalRatingDescriptor, #12553
      */
     void ParentalRatingDescriptor_test (void);
+
+    /** test items from ExtendedEventDescriptor
+     */
+    void ExtendedEventDescriptor_test (void);
+
+    /** test US channel names for trailing \0 characters, #12612
+      */
+    void OTAChannelName_test (void);
 };

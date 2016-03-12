@@ -10,12 +10,14 @@
 #include "exitcodes.h"
 #include "mythcontext.h"
 #include "mythversion.h"
+#include "loggingserver.h"
 #include "mythlogging.h"
 
 // Local includes
 #include "mythutil.h"
 #include "commandlineparser.h"
 #include "backendutils.h"
+#include "eitutils.h"
 #include "fileutils.h"
 #include "mpegutils.h"
 #include "jobutils.h"
@@ -87,7 +89,7 @@ int main(int argc, char *argv[])
     signallist << SIGRTMIN;
 #endif
     SignalHandler::Init(signallist);
-    signal(SIGHUP, SIG_IGN);
+    SignalHandler::SetHandler(SIGHUP, logSigHup);
 #endif
 
     gContext = new MythContext(MYTH_BINARY_VERSION);
@@ -102,6 +104,7 @@ int main(int argc, char *argv[])
     UtilMap utilMap;
 
     registerBackendUtils(utilMap);
+    registerEITUtils(utilMap);
     registerFileUtils(utilMap);
     registerMPEGUtils(utilMap);
     registerJobUtils(utilMap);

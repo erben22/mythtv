@@ -37,11 +37,11 @@
 // LyricsView
 
 LyricsView::LyricsView(MythScreenStack *parent, MythScreenType *parentScreen)
-         :MusicCommon(parent, parentScreen, "lyricsview")
+         :MusicCommon(parent, parentScreen, "lyricsview"),
+         m_lyricsList(NULL), m_statusText(NULL), m_loadingState(NULL), m_bufferStatus(NULL),
+         m_bufferProgress(NULL), m_lyricData(NULL), m_autoScroll(true)
 {
-    m_lyricData = NULL;
     m_currentView = MV_LYRICS;
-    m_autoScroll = true;
 
     gCoreContext->addListener(this);
 }
@@ -231,21 +231,24 @@ void LyricsView::ShowMenu(void)
 
     MythMenu *menu = new MythMenu(label, this, "actionmenu");
 
-    menu->AddItem(tr("Find Lyrics"), NULL, createFindLyricsMenu());
-
-    if (gPlayer->getPlayMode() != MusicPlayer::PLAYMODE_RADIO)
+    if (m_lyricData)
     {
-        if (m_lyricData->lyrics()->count())
-            menu->AddItem(tr("Edit Lyrics"), NULL, NULL);
-        else
-            menu->AddItem(tr("Add Lyrics"), NULL, NULL);
+        menu->AddItem(tr("Find Lyrics"), NULL, createFindLyricsMenu());
 
-        if (m_lyricData->lyrics()->count() && m_lyricData->changed())
-            menu->AddItem(tr("Save Lyrics"), NULL, NULL);
+        if (gPlayer->getPlayMode() != MusicPlayer::PLAYMODE_RADIO)
+        {
+            if (m_lyricData->lyrics()->count())
+                menu->AddItem(tr("Edit Lyrics"), NULL, NULL);
+            else
+                menu->AddItem(tr("Add Lyrics"), NULL, NULL);
+
+            if (m_lyricData->lyrics()->count() && m_lyricData->changed())
+                menu->AddItem(tr("Save Lyrics"), NULL, NULL);
+        }
+
+        if (!m_autoScroll)
+            menu->AddItem(tr("Auto Scroll Lyrics"), NULL, NULL);
     }
-
-    if (!m_autoScroll)
-        menu->AddItem(tr("Auto Scroll Lyrics"), NULL, NULL);
 
     menu->AddItem(tr("Other Options"), NULL, createMainMenu());
 

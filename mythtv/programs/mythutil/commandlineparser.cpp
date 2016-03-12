@@ -154,6 +154,9 @@ void MythUtilCommandLineParser::LoadArguments(void)
         << add("--scanmusic", "scanmusic", false,
                 "Scan the 'Music' Storage Group for music files", "")
                 ->SetGroup("Music Scanning")
+        << add("--updateradiostreams", "updateradiostreams", false,
+                "Downloads an updated radio stream list from the MythTV server", "")
+                ->SetGroup("Music Scanning")
         << add("--updatemeta", "updatemeta", false,
                 "Update a music tracks database record and tag with new metadata", "")
                 ->SetGroup("Metadata Reading/Writing")
@@ -173,6 +176,11 @@ void MythUtilCommandLineParser::LoadArguments(void)
         << add("--checkrecordings", "checkrecordings", false,
                 "Check all recording exist and have a seektable etc.", "")
                 ->SetGroup("Recording Utils")
+
+        // eitutils.cpp
+        << add("--cleareit", "cleareit", false,
+                "Clear guide received from EIT.", "")
+                ->SetGroup("EIT Utils")
         );
 
     // mpegutils.cpp
@@ -264,6 +272,10 @@ void MythUtilCommandLineParser::LoadArguments(void)
     // recordingutils.cpp
     add("--fixseektable", "fixseektable", false, "(optional) fix the seektable if missing for a recording", "")
         ->SetChildOf("checkrecordings");
+
+    // eitutils.cpp
+    add("--sourceid", "sourceid", -1, "(optional) specify sourceid of video source to operate on instead of all", "")
+        ->SetChildOf("cleareit");
 
     // Generic Options used by more than one utility
     addRecording();

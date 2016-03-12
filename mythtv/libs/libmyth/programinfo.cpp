@@ -2280,12 +2280,13 @@ bool ProgramInfo::IsSameProgram(const ProgramInfo& other) const
  */
 bool ProgramInfo::IsSameProgramAndStartTime(const ProgramInfo& other) const
 {
+    if (startts != other.startts)
+        return false;
+    if (IsSameChannel(other))
+        return true;
     if (!IsSameProgram(other))
         return false;
-    if (startts == other.startts)
-        return true;
-
-    return false;
+    return true;
 }
 
 /**
@@ -2862,6 +2863,68 @@ void ProgramInfo::SaveDVDBookmark(const QStringList &fields) const
 
     if (!query.exec())
         MythDB::DBError("SetDVDBookmark updating", query);
+}
+
+/** \brief Queries "bdbookmark" table for bookmarking BD serial number.
+ *  \return BD state string
+ */
+QStringList ProgramInfo::QueryBDBookmark(const QString &serialid) const
+{
+    QStringList fields = QStringList();
+    MSqlQuery query(MSqlQuery::InitCon());
+
+    if (!(programflags & FL_IGNOREBOOKMARK))
+    {
+        query.prepare(" SELECT bdstate FROM bdbookmark "
+                        " WHERE serialid = :SERIALID ");
+        query.bindValue(":SERIALID", serialid);
+
+        if (query.exec() && query.next())
+            fields.append(query.value(0).toString());
+    }
+
+    return fields;
+}
+
+void ProgramInfo::SaveBDBookmark(const QStringList &fields) const
+{
+    QStringList::const_iterator it = fields.begin();
+    MSqlQuery query(MSqlQuery::InitCon());
+
+    QString serialid    = *(it);
+    QString name        = *(++it);
+
+    if( fields.count() == 3 )
+    {
+        // We have a state field, so update/create the bookmark
+        QString state = *(++it);
+
+        query.prepare("INSERT IGNORE INTO bdbookmark "
+                        " (serialid, name)"
+                        " VALUES ( :SERIALID, :NAME );");
+        query.bindValue(":SERIALID", serialid);
+        query.bindValue(":NAME", name);
+
+        if (!query.exec())
+            MythDB::DBError("SetBDBookmark inserting", query);
+
+        query.prepare(" UPDATE bdbookmark "
+                        " SET bdstate    = :STATE , "
+                        "     timestamp  = NOW() "
+                        " WHERE serialid = :SERIALID");
+        query.bindValue(":STATE",state);
+        query.bindValue(":SERIALID",serialid);
+    }
+    else
+    {
+        // No state field, delete the bookmark
+        query.prepare("DELETE FROM bdbookmark "
+                        "WHERE serialid = :SERIALID");
+        query.bindValue(":SERIALID",serialid);
+    }
+
+    if (!query.exec())
+        MythDB::DBError("SetBDBookmark updating", query);
 }
 
 /** \brief Queries recordedprogram to get the category_type of the
@@ -5190,6 +5253,8 @@ static int init_tr(void)
         QObject::tr("Transcoders",
                     "Recording Profile Group Name") +
         QObject::tr("USB MPEG-4 Encoder (Plextor ConvertX, etc)",
+                    "Recording Profile Group Name") +
+        QObject::tr("V4L2 Encoders",
                     "Recording Profile Group Name");
 
     QString display_rec_groups =
@@ -5492,6 +5557,28 @@ static bool FromProgramQuery(const QString &sql, const MSqlBindings &bindings,
     return true;
 }
 
+bool LoadFromProgram(ProgramList &destination, const QString &where,
+                     const QString &groupBy, const QString &orderBy,
+                     const MSqlBindings &bindings, const ProgramList &schedList)
+{
+    uint count = 0;
+
+    QString queryStr = "";
+
+    if (!where.isEmpty())
+        queryStr.append(QString("WHERE %1 ").arg(where));
+
+    if (!groupBy.isEmpty())
+        queryStr.append(QString("GROUP BY %1 ").arg(groupBy));
+
+    if (!orderBy.isEmpty())
+        queryStr.append(QString("ORDER BY %1 ").arg(orderBy));
+
+    // ------------------------------------------------------------------------
+
+    return LoadFromProgram(destination, queryStr, bindings, schedList, 0, 0, count);
+}
+
 bool LoadFromProgram(ProgramList &destination,
                      const QString &sql, const MSqlBindings &bindings,
                      const ProgramList &schedList)
@@ -5507,6 +5594,11 @@ bool LoadFromProgram(ProgramList &destination,
     //        the caller isn't getting what they asked for and to fix that they
     //        are forced to include a GROUP BY, ORDER BY or WHERE that they
     //        do not want
+    //
+    // See the new version of this method above. The plan is to convert existing
+    // users of this method and have them supply all of their own data for the
+    // queries (no defaults.)
+
     if (!queryStr.contains("WHERE"))
         queryStr += " WHERE visible != 0 ";
 
@@ -5533,7 +5625,7 @@ bool LoadFromProgram(ProgramList &destination,
 
     // ------------------------------------------------------------------------
 
-    return LoadFromProgram(destination, sql, bindings, schedList, 0, 0, count);
+    return LoadFromProgram(destination, queryStr, bindings, schedList, 0, 0, count);
 }
 
 bool LoadFromProgram( ProgramList &destination,
